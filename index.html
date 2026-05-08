@@ -1,0 +1,370 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>🍏 Bilans – Iron Bodyfit</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: 'Segoe UI', system-ui, sans-serif;
+    background: #0d0d0d; color: #f0f0f0;
+    min-height: 100vh; padding: 24px 16px 60px;
+    max-width: 700px; margin: auto;
+  }
+  header { text-align: center; margin-bottom: 24px; }
+  header h1 { font-size: 1.6rem; font-weight: 800; color: #6ee86e; }
+  header p  { font-size: 0.82rem; color: #555; margin-top: 4px; }
+
+  .token-bar {
+    background: #161616; border-radius: 12px; padding: 12px 16px;
+    margin-bottom: 18px; display: flex; gap: 10px; align-items: center;
+    border: 1px solid #2a2a2a;
+  }
+  .token-bar label { font-size: 0.75rem; color: #666; white-space: nowrap; }
+  .token-bar input {
+    flex: 1; padding: 7px 10px; border-radius: 8px;
+    border: 1px solid #2a2a2a; background: #0d0d0d;
+    color: #aaa; font-size: 0.78rem; font-family: monospace;
+  }
+  .token-bar button {
+    padding: 7px 12px; border-radius: 8px; border: none;
+    background: #1e1e1e; color: #666; font-size: 0.75rem;
+    cursor: pointer; white-space: nowrap; transition: background .15s;
+  }
+  .token-bar button:hover { background: #2a2a2a; color: #aaa; }
+  .token-bar .save-btn { background: #0f2e0f; color: #6ee86e; }
+  .token-bar .save-btn:hover { background: #1a3e1a; }
+
+  .controls {
+    display: flex; flex-wrap: wrap; gap: 10px;
+    align-items: center; justify-content: center; margin-bottom: 20px;
+  }
+  .ctrl-group { display: flex; align-items: center; gap: 6px; }
+  .ctrl-group label { font-size: 0.78rem; color: #888; }
+  input[type=number], input[type=date] {
+    padding: 6px 10px; border-radius: 8px;
+    border: 1px solid #2a2a2a; background: #1a1a1a;
+    color: #fff; font-size: .85rem;
+  }
+  input[type=number] { width: 64px; }
+
+  .btn-primary {
+    padding: 9px 22px; border-radius: 10px; border: none;
+    font-size: .88rem; font-weight: 700; cursor: pointer;
+    background: #6ee86e; color: #0d0d0d; transition: all .18s;
+  }
+  .btn-primary:hover { background: #55d655; }
+  .btn-primary:disabled { background: #1e3a1e; color: #3a6a3a; cursor: not-allowed; }
+
+  .tabs {
+    display: flex; gap: 8px; justify-content: center;
+    margin-bottom: 18px; flex-wrap: wrap;
+  }
+  .tab {
+    padding: 7px 16px; border-radius: 20px; font-size: .8rem;
+    font-weight: 700; cursor: pointer; border: 2px solid #222;
+    background: #151515; color: #555; transition: all .18s;
+  }
+  .tab.active { border-color: #6ee86e; color: #6ee86e; background: #0f2010; }
+  .badge {
+    display: inline-block; border-radius: 10px; font-size: .68rem;
+    padding: 1px 7px; margin-left: 5px; font-weight: 800;
+    background: #6ee86e; color: #0d0d0d;
+  }
+  .badge.o { background: #f5a623; }
+  .badge.r { background: #ff5252; color: #fff; }
+
+  #statusMsg { text-align: center; padding: 20px; font-size: .85rem; color: #555; }
+  #statusMsg.err { color: #ff5252; }
+
+  .loader {
+    display: flex; align-items: center; justify-content: center;
+    gap: 10px; color: #555; font-size: .85rem; padding: 30px 0;
+  }
+  .spinner {
+    width: 20px; height: 20px; border: 3px solid #222;
+    border-top-color: #6ee86e; border-radius: 50%;
+    animation: spin .8s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  .card {
+    background: #161616; border-radius: 14px;
+    padding: 14px 16px; margin-bottom: 10px;
+    display: flex; align-items: center; gap: 14px;
+    border-left: 4px solid #2a2a2a;
+    text-decoration: none; color: inherit; transition: background .15s;
+  }
+  .card:hover { background: #1c1c1c; }
+  .card.c-demain  { border-color: #6ee86e; }
+  .card.c-semaine { border-color: #f5a623; }
+  .card.c-retard  { border-color: #ff5252; }
+
+  .avatar {
+    width: 42px; height: 42px; border-radius: 50%;
+    background: #1a2e1a; color: #6ee86e;
+    display: flex; align-items: center; justify-content: center;
+    font-weight: 800; font-size: .95rem; flex-shrink: 0;
+  }
+  .card-body { flex: 1; min-width: 0; }
+  .card-name { font-weight: 700; font-size: .93rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .card-sub  { font-size: .72rem; color: #555; margin-top: 3px; }
+  .pill {
+    display: inline-block; padding: 2px 9px; border-radius: 10px;
+    font-size: .67rem; font-weight: 800; margin-top: 5px;
+  }
+  .p-green  { background: #0f2e0f; color: #6ee86e; }
+  .p-orange { background: #2e1e00; color: #f5a623; }
+  .p-red    { background: #2e0808; color: #ff5252; }
+  .p-gray   { background: #1e1e1e; color: #555; }
+
+  .card-right { text-align: right; flex-shrink: 0; }
+  .card-date  { font-size: .8rem; font-weight: 700; color: #ccc; }
+  .card-jours { font-size: .7rem; color: #555; margin-top: 3px; }
+
+  .empty  { text-align: center; color: #333; padding: 40px 0; font-size: .88rem; }
+  .footer { text-align: center; color: #333; font-size: .72rem; margin-top: 28px; }
+  .footer a { color: #3a6a3a; text-decoration: none; }
+  .footer a:hover { color: #6ee86e; }
+
+  .info-bar {
+    background: #0f2010; border: 1px solid #1e4020; border-radius: 10px;
+    padding: 10px 14px; font-size: .75rem; color: #4aaa4a;
+    margin-bottom: 16px; text-align: center;
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>🍏 Suivi des Bilans</h1>
+  <p id="dateLabel"></p>
+</header>
+
+<div class="info-bar">
+  🔗 Connexion directe à Notion — aucun serveur nécessaire
+</div>
+
+<div class="token-bar">
+  <label>Token Notion :</label>
+  <input type="password" id="notionToken" placeholder="ntn_... ou secret_..." />
+  <button onclick="toggleToken()">👁</button>
+  <button class="save-btn" onclick="saveToken()">💾 Sauver</button>
+</div>
+
+<div class="controls">
+  <div class="ctrl-group">
+    <label>Intervalle :</label>
+    <input type="number" id="interval" value="2" min="1" max="12" />
+    <label>mois</label>
+  </div>
+  <div class="ctrl-group">
+    <label>Alerte :</label>
+    <input type="number" id="window" value="7" min="1" max="30" />
+    <label>jours</label>
+  </div>
+  <div class="ctrl-group">
+    <label>Date :</label>
+    <input type="date" id="refDate" />
+  </div>
+  <button class="btn-primary" id="loadBtn" onclick="loadData()">🔄 Charger</button>
+</div>
+
+<div class="tabs">
+  <div class="tab active" onclick="setTab('demain')"  id="tab-demain">Demain <span class="badge"   id="b-demain">0</span></div>
+  <div class="tab"        onclick="setTab('semaine')" id="tab-semaine">Semaine <span class="badge o" id="b-semaine">0</span></div>
+  <div class="tab"        onclick="setTab('retard')"  id="tab-retard">En retard <span class="badge r" id="b-retard">0</span></div>
+  <div class="tab"        onclick="setTab('tous')"    id="tab-tous">Tous <span class="badge"   id="b-tous">0</span></div>
+</div>
+
+<div id="statusMsg">Entrez votre token Notion et cliquez 🔄 Charger.</div>
+<div id="list"></div>
+<div class="footer" id="footer"></div>
+
+<script>
+const DB_ID = "21f45e0a73f88047abb9c8da0d353c9e";
+let processed = [], currentTab = 'demain';
+
+window.addEventListener('DOMContentLoaded', () => {
+  // Charger token sauvegardé
+  const saved = localStorage.getItem('ibf_notion_token');
+  if (saved) document.getElementById('notionToken').value = saved;
+
+  const d = new Date();
+  document.getElementById('refDate').value = d.toISOString().split('T')[0];
+  document.getElementById('dateLabel').textContent =
+    d.toLocaleDateString('fr-FR', { weekday:'long', day:'numeric', month:'long', year:'numeric' });
+});
+
+function toggleToken() {
+  const i = document.getElementById('notionToken');
+  i.type = i.type === 'password' ? 'text' : 'password';
+}
+
+function saveToken() {
+  const t = document.getElementById('notionToken').value.trim();
+  if (t) {
+    localStorage.setItem('ibf_notion_token', t);
+    alert('✅ Token sauvegardé dans ce navigateur !');
+  }
+}
+
+function setTab(t) {
+  currentTab = t;
+  document.querySelectorAll('.tab').forEach(el => el.classList.remove('active'));
+  document.getElementById('tab-' + t).classList.add('active');
+  renderCards();
+}
+
+async function loadData() {
+  const token = document.getElementById('notionToken').value.trim();
+  if (!token) {
+    showError('❌ Entrez votre token Notion.');
+    return;
+  }
+
+  const btn = document.getElementById('loadBtn');
+  btn.disabled = true;
+  document.getElementById('statusMsg').innerHTML =
+    '<div class="loader"><div class="spinner"></div>Connexion à Notion…</div>';
+  document.getElementById('statusMsg').className = '';
+  document.getElementById('list').innerHTML = '';
+
+  try {
+    let all = [], cursor = undefined, hasMore = true;
+
+    // Paginer tous les résultats (Notion renvoie 100 max par appel)
+    while (hasMore) {
+      const body = { page_size: 100 };
+      if (cursor) body.start_cursor = cursor;
+
+      const resp = await fetch(`https://api.notion.com/v1/databases/${DB_ID}/query`, {
+        method: 'POST',
+        headers: {
+          'Authorization': 'Bearer ' + token,
+          'Content-Type': 'application/json',
+          'Notion-Version': '2022-06-28'
+        },
+        body: JSON.stringify(body)
+      });
+
+      if (!resp.ok) {
+        const err = await resp.json();
+        throw new Error(err.message || 'Erreur Notion ' + resp.status);
+      }
+
+      const data = await resp.json();
+      all = all.concat(data.results);
+      hasMore = data.has_more;
+      cursor  = data.next_cursor;
+    }
+
+    // Parser les entrées
+    const bilans = all.map(page => {
+      const props = page.properties;
+
+      // Nom = titre "Bilan"
+      const nomRaw = props['Bilan']?.title?.[0]?.plain_text || '';
+      // Prénom = "Unnamed: 1" (champ texte)
+      const prenomRaw = props['Unnamed: 1']?.rich_text?.[0]?.plain_text || '';
+      // Date du dernier bilan
+      const dateRaw = props['Date']?.date?.start || null;
+      // Statut
+      const statut = props['Statut']?.select?.name || '';
+      // URL Notion
+      const url = page.url || '';
+
+      return { nom: nomRaw, prenom: prenomRaw, date: dateRaw, statut, url };
+    }).filter(b => b.date); // garder seulement ceux qui ont une date
+
+    if (!bilans.length) throw new Error('Aucun bilan avec date trouvé. Vérifiez que l\'intégration a accès à la base.');
+
+    compute(bilans);
+
+  } catch (err) {
+    showError('❌ ' + err.message);
+    console.error(err);
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+function compute(bilans) {
+  const ref       = new Date(document.getElementById('refDate').value + 'T00:00:00');
+  const intervalM = parseInt(document.getElementById('interval').value) || 2;
+  const windowD   = parseInt(document.getElementById('window').value)   || 7;
+
+  processed = bilans.map(b => {
+    const last = new Date(b.date + 'T00:00:00');
+    const next = new Date(last);
+    next.setMonth(next.getMonth() + intervalM);
+    const diffDays = Math.ceil((next - ref) / 86400000);
+
+    let cat = 'futur';
+    if      (diffDays < 0)        cat = 'retard';
+    else if (diffDays === 1)       cat = 'demain';
+    else if (diffDays <= windowD)  cat = 'semaine';
+
+    return { ...b, next, diffDays, cat };
+  }).sort((a, b) => a.diffDays - b.diffDays);
+
+  document.getElementById('b-demain').textContent  = processed.filter(x => x.cat === 'demain').length;
+  document.getElementById('b-semaine').textContent = processed.filter(x => x.cat === 'semaine' || x.cat === 'demain').length;
+  document.getElementById('b-retard').textContent  = processed.filter(x => x.cat === 'retard').length;
+  document.getElementById('b-tous').textContent    = processed.length;
+
+  document.getElementById('statusMsg').textContent = '';
+  document.getElementById('footer').innerHTML =
+    `✅ ${processed.length} adhérents synchronisés · ${new Date().toLocaleTimeString('fr-FR')} · <a href="https://www.notion.so/${DB_ID}" target="_blank">Ouvrir Notion →</a>`;
+
+  renderCards();
+}
+
+function renderCards() {
+  const list = document.getElementById('list');
+  let items = processed;
+  if      (currentTab === 'demain')  items = processed.filter(x => x.cat === 'demain');
+  else if (currentTab === 'semaine') items = processed.filter(x => x.cat === 'semaine' || x.cat === 'demain');
+  else if (currentTab === 'retard')  items = processed.filter(x => x.cat === 'retard');
+
+  if (!items.length) {
+    list.innerHTML = '<div class="empty">✅ Aucun bilan dans cette catégorie</div>';
+    return;
+  }
+
+  list.innerHTML = items.map(b => {
+    const nom    = [b.prenom, b.nom].filter(Boolean).join(' ') || b.nom || '—';
+    const init   = (((b.prenom||'')[0]||'') + ((b.nom||'')[0]||'')).toUpperCase() || '?';
+    const nextFr = b.next.toLocaleDateString('fr-FR', { day:'numeric', month:'long' });
+    const lastFr = new Date(b.date).toLocaleDateString('fr-FR', { day:'numeric', month:'short', year:'numeric' });
+
+    let cardCls = '', pillHtml = '';
+    if      (b.cat === 'retard')  { cardCls = 'c-retard';  pillHtml = `<span class="pill p-red">⚠️ ${Math.abs(b.diffDays)}j de retard</span>`; }
+    else if (b.cat === 'demain')  { cardCls = 'c-demain';  pillHtml = `<span class="pill p-green">🟢 Demain !</span>`; }
+    else if (b.cat === 'semaine') { cardCls = 'c-semaine'; pillHtml = `<span class="pill p-orange">Dans ${b.diffDays} jours</span>`; }
+    else                          {                         pillHtml = `<span class="pill p-gray">Dans ${b.diffDays}j</span>`; }
+
+    return `
+    <a class="card ${cardCls}" href="${b.url}" target="_blank">
+      <div class="avatar">${init}</div>
+      <div class="card-body">
+        <div class="card-name">${nom}</div>
+        <div class="card-sub">Dernier bilan : ${lastFr}${b.statut ? ' · ' + b.statut : ''}</div>
+        ${pillHtml}
+      </div>
+      <div class="card-right">
+        <div class="card-date">${nextFr}</div>
+        <div class="card-jours">${b.diffDays > 0 ? 'dans '+b.diffDays+'j' : b.diffDays === 0 ? "aujourd'hui" : Math.abs(b.diffDays)+'j dépassé'}</div>
+      </div>
+    </a>`;
+  }).join('');
+}
+
+function showError(msg) {
+  document.getElementById('statusMsg').textContent = msg;
+  document.getElementById('statusMsg').className = 'err';
+}
+</script>
+</body>
+</html>
