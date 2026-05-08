@@ -143,7 +143,7 @@
 </header>
 
 <div class="info-bar">
-  🔗 Connexion directe à Notion — aucun serveur nécessaire
+  🔗 Connexion directe à Notion · colonne conseillée : <strong>Fréquence bilan</strong> avec <strong>1</strong> pour mensuel et <strong>2</strong> pour tous les 2 mois
 </div>
 
 <div class="token-bar">
@@ -155,8 +155,8 @@
 
 <div class="controls">
   <div class="ctrl-group">
-    <label>Intervalle :</label>
-    <input type="number" id="interval" value="2" min="1" max="12" />
+    <label>Par défaut :</label>
+    <input type="number" id="fallbackInterval" value="2" min="1" max="12" />
     <label>mois</label>
   </div>
   <div class="ctrl-group">
@@ -184,11 +184,24 @@
 
 <script>
 const DB_ID = "21f45e0a73f88047abb9c8da0d353c9e";
+const TOKEN_STORAGE_KEY = 'ibf_notion_token';
+const TITLE_PROP_NAMES = ['Bilan', 'Nom', 'Adhérent', 'Adherent'];
+const DETAIL_PROP_NAMES = ['Unnamed: 1', 'Prénom', 'Prenom'];
+const DATE_PROP_NAMES = ['Date', 'Dernier bilan', 'Date bilan'];
+const STATUS_PROP_NAMES = ['Statut', 'Status', 'État', 'Etat'];
+const FREQUENCY_PROP_NAMES = [
+  'Fréquence bilan',
+  'Frequence bilan',
+  'Fréquence',
+  'Frequence',
+  'Périodicité',
+  'Periodicite',
+  'Intervalle'
+];
 let processed = [], currentTab = 'demain';
 
 window.addEventListener('DOMContentLoaded', () => {
-  // Charger token sauvegardé
-  const saved = localStorage.getItem('ibf_notion_token');
+  const saved = localStorage.getItem(TOKEN_STORAGE_KEY);
   if (saved) document.getElementById('notionToken').value = saved;
 
   const d = new Date();
@@ -205,7 +218,7 @@ function toggleToken() {
 function saveToken() {
   const t = document.getElementById('notionToken').value.trim();
   if (t) {
-    localStorage.setItem('ibf_notion_token', t);
+    localStorage.setItem(TOKEN_STORAGE_KEY, t);
     alert('✅ Token sauvegardé dans ce navigateur !');
   }
 }
@@ -263,24 +276,32 @@ async function loadData() {
     // Parser les entrées
     const bilans = all.map(page => {
       const props = page.properties;
-
-      // Nom = titre "Bilan"
-      const nomRaw = props['Bilan']?.title?.[0]?.plain_text || '';
-      // Prénom = "Unnamed: 1" (champ texte)
-      const prenomRaw = props['Unnamed: 1']?.rich_text?.[0]?.plain_text || '';
-      // Date du dernier bilan
-      const dateRaw = props['Date']?.date?.start || null;
-      // Statut
-      const statut = props['Statut']?.select?.name || '';
-      // URL Notion
+      const nomRaw = extractPlainText(findProperty(props, TITLE_PROP_NAMES));
+      const detailRaw = extractPlainText(findProperty(props, DETAIL_PROP_NAMES));
+      const dateRaw = extractDate(findProperty(props, DATE_PROP_NAMES));
+      const statut = extractPlainText(findProperty(props, STATUS_PROP_NAMES));
+      const bilanLabel = looksLikeBilanLabel(detailRaw) ? detailRaw : '';
+      const prenomRaw = bilanLabel ? '' : detailRaw;
+      const displayName = buildDisplayName(nomRaw, prenomRaw);
+      const frequency = getFrequencyMonths(props, bilanLabel, statut);
       const url = page.url || '';
 
-      return { nom: nomRaw, prenom: prenomRaw, date: dateRaw, statut, url };
-    }).filter(b => b.date); // garder seulement ceux qui ont une date
+      return {
+        nom: nomRaw,
+        prenom: prenomRaw,
+        displayName,
+        date: dateRaw,
+        statut,
+        url,
+        bilanLabel,
+        intervalMonths: frequency.value,
+        frequencySource: frequency.source
+      };
+    }).filter(b => b.date);
 
     if (!bilans.length) throw new Error('Aucun bilan avec date trouvé. Vérifiez que l\'intégration a accès à la base.');
 
-    compute(bilans);
+    compute(keepLatestBilanPerPerson(bilans));
 
   } catch (err) {
     showError('❌ ' + err.message);
@@ -290,15 +311,180 @@ async function loadData() {
   }
 }
 
+function findProperty(props, candidates) {
+  for (const name of candidates) {
+    if (props[name]) return props[name];
+  }
+  return null;
+}
+
+function extractPlainText(prop) {
+  if (!prop) return '';
+
+  if (prop.type === 'title') {
+    return prop.title.map(item => item.plain_text).join('').trim();
+  }
+
+  if (prop.type === 'rich_text') {
+    return prop.rich_text.map(item => item.plain_text).join('').trim();
+  }
+
+  if (prop.type === 'select') {
+    return prop.select?.name || '';
+  }
+
+  if (prop.type === 'status') {
+    return prop.status?.name || '';
+  }
+
+  if (prop.type === 'multi_select') {
+    return prop.multi_select?.map(item => item.name).join(', ') || '';
+  }
+
+  if (prop.type === 'number') {
+    return prop.number != null ? String(prop.number) : '';
+  }
+
+  if (prop.type === 'date') {
+    return prop.date?.start || '';
+  }
+
+  if (prop.type === 'formula') {
+    const formula = prop.formula;
+    if (formula?.type === 'string') return formula.string || '';
+    if (formula?.type === 'number' && formula.number != null) return String(formula.number);
+    if (formula?.type === 'date') return formula.date?.start || '';
+  }
+
+  return '';
+}
+
+function extractDate(prop) {
+  if (!prop) return null;
+
+  if (prop.type === 'date') {
+    return prop.date?.start || null;
+  }
+
+  if (prop.type === 'formula' && prop.formula?.type === 'date') {
+    return prop.formula.date?.start || null;
+  }
+
+  const raw = extractPlainText(prop);
+  return /^\d{4}-\d{2}-\d{2}/.test(raw) ? raw : null;
+}
+
+function parseBilanNumber(raw) {
+  if (raw == null) return null;
+
+  const value = String(raw).trim().toLowerCase();
+  if (!value) return null;
+  if (value.includes('1er bilan')) return 1;
+
+  const match = value.match(/bilan\s*(\d+)/i);
+  if (!match) return null;
+
+  const number = parseInt(match[1], 10);
+  return Number.isFinite(number) ? number : null;
+}
+
+function looksLikeBilanLabel(raw) {
+  if (raw == null) return false;
+  return /bilan/i.test(String(raw)) || parseBilanNumber(raw) != null;
+}
+
+function parseFrequency(raw) {
+  if (raw == null) return null;
+
+  const value = String(raw).trim().toLowerCase();
+  if (!value) return null;
+
+  if (value.includes('mensu')) return 1;
+  if (value.includes('bimes')) return 2;
+
+  const match = value.match(/(\d+(?:[.,]\d+)?)/);
+  if (!match) return null;
+
+  const months = Math.round(parseFloat(match[1].replace(',', '.')));
+  return months > 0 ? months : null;
+}
+
+function inferFrequencyFromBilan(raw) {
+  const number = parseBilanNumber(raw);
+  if (number == null) return null;
+  return number <= 1 ? 1 : 2;
+}
+
+function getFrequencyMonths(props, bilanLabel, statut) {
+  const fallback = parseInt(document.getElementById('fallbackInterval').value, 10) || 2;
+  const prop = findProperty(props, FREQUENCY_PROP_NAMES);
+  const parsed = parseFrequency(extractPlainText(prop));
+
+  if (parsed) {
+    return { value: parsed, source: 'explicit' };
+  }
+
+  const inferred = inferFrequencyFromBilan(bilanLabel) || inferFrequencyFromBilan(statut);
+  if (inferred) {
+    return { value: inferred, source: 'inferred' };
+  }
+
+  return { value: fallback, source: 'fallback' };
+}
+
+function formatFrequency(months) {
+  return months === 1 ? 'Mensuel' : `Tous les ${months} mois`;
+}
+
+function buildDisplayName(nom, prenom) {
+  const combined = [prenom, nom].filter(Boolean).join(' ').trim();
+  return combined || nom || prenom || '—';
+}
+
+function normalizeMemberKey(name) {
+  return (name || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function keepLatestBilanPerPerson(bilans) {
+  const latestByPerson = new Map();
+
+  for (const bilan of bilans) {
+    const key = normalizeMemberKey(bilan.displayName);
+    if (!key) continue;
+
+    const existing = latestByPerson.get(key);
+    if (!existing || new Date(bilan.date) > new Date(existing.date)) {
+      latestByPerson.set(key, bilan);
+    }
+  }
+
+  return Array.from(latestByPerson.values());
+}
+
+function getInitials(name) {
+  const parts = String(name || '')
+    .split(/\s+/)
+    .filter(Boolean);
+
+  if (!parts.length) return '?';
+  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+
+  return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
+}
+
 function compute(bilans) {
-  const ref       = new Date(document.getElementById('refDate').value + 'T00:00:00');
-  const intervalM = parseInt(document.getElementById('interval').value) || 2;
-  const windowD   = parseInt(document.getElementById('window').value)   || 7;
+  const ref = new Date(document.getElementById('refDate').value + 'T00:00:00');
+  const windowD = parseInt(document.getElementById('window').value, 10) || 7;
 
   processed = bilans.map(b => {
     const last = new Date(b.date + 'T00:00:00');
     const next = new Date(last);
-    next.setMonth(next.getMonth() + intervalM);
+    next.setMonth(next.getMonth() + b.intervalMonths);
     const diffDays = Math.ceil((next - ref) / 86400000);
 
     let cat = 'futur';
@@ -314,9 +500,30 @@ function compute(bilans) {
   document.getElementById('b-retard').textContent  = processed.filter(x => x.cat === 'retard').length;
   document.getElementById('b-tous').textContent    = processed.length;
 
-  document.getElementById('statusMsg').textContent = '';
+  const explicitCount = processed.filter(x => x.frequencySource === 'explicit').length;
+  const inferredCount = processed.filter(x => x.frequencySource === 'inferred').length;
+  const fallbackCount = processed.filter(x => x.frequencySource === 'fallback').length;
+  const monthlyCount = processed.filter(x => x.intervalMonths === 1).length;
+  const bimonthlyCount = processed.filter(x => x.intervalMonths === 2).length;
+
+  if (inferredCount > 0 && explicitCount === 0 && fallbackCount === 0) {
+    document.getElementById('statusMsg').textContent =
+      'ℹ️ Fréquence déduite automatiquement : Bilan 1 = 1 mois, Bilan 2+ = 2 mois.';
+  } else if (fallbackCount === processed.length) {
+    document.getElementById('statusMsg').textContent =
+      'ℹ️ Colonne de fréquence non détectée : intervalle par défaut appliqué à tous les adhérents.';
+  } else if (fallbackCount > 0) {
+    document.getElementById('statusMsg').textContent =
+      `ℹ️ ${fallbackCount} adhérent(s) utilisent encore l'intervalle par défaut.`;
+  } else if (inferredCount > 0) {
+    document.getElementById('statusMsg').textContent =
+      `ℹ️ ${inferredCount} fréquence(s) déduites automatiquement depuis le numéro de bilan.`;
+  } else {
+    document.getElementById('statusMsg').textContent = '';
+  }
+
   document.getElementById('footer').innerHTML =
-    `✅ ${processed.length} adhérents synchronisés · ${new Date().toLocaleTimeString('fr-FR')} · <a href="https://www.notion.so/${DB_ID}" target="_blank">Ouvrir Notion →</a>`;
+    `✅ ${processed.length} adhérents synchronisés · 1 mois : ${monthlyCount} · 2 mois : ${bimonthlyCount}${fallbackCount ? ` · défaut : ${fallbackCount}` : ''} · ${new Date().toLocaleTimeString('fr-FR')} · <a href="https://www.notion.so/${DB_ID}" target="_blank">Ouvrir Notion →</a>`;
 
   renderCards();
 }
@@ -334,13 +541,19 @@ function renderCards() {
   }
 
   list.innerHTML = items.map(b => {
-    const nom    = [b.prenom, b.nom].filter(Boolean).join(' ') || b.nom || '—';
-    const init   = (((b.prenom||'')[0]||'') + ((b.nom||'')[0]||'')).toUpperCase() || '?';
+    const nom = b.displayName || [b.prenom, b.nom].filter(Boolean).join(' ') || b.nom || '—';
+    const init = getInitials(nom);
     const nextFr = b.next.toLocaleDateString('fr-FR', { day:'numeric', month:'long' });
     const lastFr = new Date(b.date).toLocaleDateString('fr-FR', { day:'numeric', month:'short', year:'numeric' });
+    const frequencyLabel = formatFrequency(b.intervalMonths);
+    const statusLabel = b.statut && b.statut.toLowerCase() !== (b.bilanLabel || '').toLowerCase()
+      ? ` · ${b.statut}`
+      : '';
+    const bilanLine = b.bilanLabel ? ` · ${b.bilanLabel}` : '';
 
     let cardCls = '', pillHtml = '';
     if      (b.cat === 'retard')  { cardCls = 'c-retard';  pillHtml = `<span class="pill p-red">⚠️ ${Math.abs(b.diffDays)}j de retard</span>`; }
+    else if (b.diffDays === 0)    { cardCls = 'c-semaine'; pillHtml = `<span class="pill p-orange">🟠 Aujourd'hui</span>`; }
     else if (b.cat === 'demain')  { cardCls = 'c-demain';  pillHtml = `<span class="pill p-green">🟢 Demain !</span>`; }
     else if (b.cat === 'semaine') { cardCls = 'c-semaine'; pillHtml = `<span class="pill p-orange">Dans ${b.diffDays} jours</span>`; }
     else                          {                         pillHtml = `<span class="pill p-gray">Dans ${b.diffDays}j</span>`; }
@@ -350,7 +563,7 @@ function renderCards() {
       <div class="avatar">${init}</div>
       <div class="card-body">
         <div class="card-name">${nom}</div>
-        <div class="card-sub">Dernier bilan : ${lastFr}${b.statut ? ' · ' + b.statut : ''}</div>
+        <div class="card-sub">Dernier bilan : ${lastFr}${bilanLine} · ${frequencyLabel}${statusLabel}</div>
         ${pillHtml}
       </div>
       <div class="card-right">
