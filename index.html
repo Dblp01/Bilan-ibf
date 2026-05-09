@@ -143,22 +143,10 @@
 </header>
 
 <div class="info-bar">
-  🔗 Connexion directe à Notion · colonne conseillée : <strong>Fréquence bilan</strong> avec <strong>1</strong> pour mensuel et <strong>2</strong> pour tous les 2 mois
-</div>
-
-<div class="token-bar">
-  <label>Token Notion :</label>
-  <input type="password" id="notionToken" placeholder="ntn_... ou secret_..." />
-  <button onclick="toggleToken()">👁</button>
-  <button class="save-btn" onclick="saveToken()">💾 Sauver</button>
+  🔄 Synchronisé automatiquement depuis Notion via GitHub · aucun token à coller sur le site
 </div>
 
 <div class="controls">
-  <div class="ctrl-group">
-    <label>Par défaut :</label>
-    <input type="number" id="fallbackInterval" value="2" min="1" max="12" />
-    <label>mois</label>
-  </div>
   <div class="ctrl-group">
     <label>Alerte :</label>
     <input type="number" id="window" value="7" min="1" max="30" />
@@ -168,7 +156,7 @@
     <label>Date :</label>
     <input type="date" id="refDate" />
   </div>
-  <button class="btn-primary" id="loadBtn" onclick="loadData()">🔄 Charger</button>
+  <button class="btn-primary" id="loadBtn" onclick="loadData()">🔄 Actualiser</button>
 </div>
 
 <div class="tabs">
@@ -178,50 +166,22 @@
   <div class="tab"        onclick="setTab('tous')"    id="tab-tous">Tous <span class="badge"   id="b-tous">0</span></div>
 </div>
 
-<div id="statusMsg">Entrez votre token Notion et cliquez 🔄 Charger.</div>
+<div id="statusMsg">Chargement du dernier export Notion…</div>
 <div id="list"></div>
 <div class="footer" id="footer"></div>
 
 <script>
 const DB_ID = "21f45e0a73f88047abb9c8da0d353c9e";
-const TOKEN_STORAGE_KEY = 'ibf_notion_token';
-const TITLE_PROP_NAMES = ['Bilan', 'Nom', 'Adhérent', 'Adherent'];
-const DETAIL_PROP_NAMES = ['Unnamed: 1', 'Prénom', 'Prenom'];
-const DATE_PROP_NAMES = ['Date', 'Dernier bilan', 'Date bilan'];
-const STATUS_PROP_NAMES = ['Statut', 'Status', 'État', 'Etat'];
-const FREQUENCY_PROP_NAMES = [
-  'Fréquence bilan',
-  'Frequence bilan',
-  'Fréquence',
-  'Frequence',
-  'Périodicité',
-  'Periodicite',
-  'Intervalle'
-];
-let processed = [], currentTab = 'demain';
+const CACHE_URL = './data/bilans.json';
+let processed = [], currentTab = 'demain', syncMeta = null;
 
 window.addEventListener('DOMContentLoaded', () => {
-  const saved = localStorage.getItem(TOKEN_STORAGE_KEY);
-  if (saved) document.getElementById('notionToken').value = saved;
-
   const d = new Date();
   document.getElementById('refDate').value = d.toISOString().split('T')[0];
   document.getElementById('dateLabel').textContent =
     d.toLocaleDateString('fr-FR', { weekday:'long', day:'numeric', month:'long', year:'numeric' });
+  loadData();
 });
-
-function toggleToken() {
-  const i = document.getElementById('notionToken');
-  i.type = i.type === 'password' ? 'text' : 'password';
-}
-
-function saveToken() {
-  const t = document.getElementById('notionToken').value.trim();
-  if (t) {
-    localStorage.setItem(TOKEN_STORAGE_KEY, t);
-    alert('✅ Token sauvegardé dans ce navigateur !');
-  }
-}
 
 function setTab(t) {
   currentTab = t;
@@ -231,239 +191,41 @@ function setTab(t) {
 }
 
 async function loadData() {
-  const token = document.getElementById('notionToken').value.trim();
-  if (!token) {
-    showError('❌ Entrez votre token Notion.');
-    return;
-  }
-
   const btn = document.getElementById('loadBtn');
   btn.disabled = true;
   document.getElementById('statusMsg').innerHTML =
-    '<div class="loader"><div class="spinner"></div>Connexion à Notion…</div>';
+    '<div class="loader"><div class="spinner"></div>Chargement des données synchronisées…</div>';
   document.getElementById('statusMsg').className = '';
   document.getElementById('list').innerHTML = '';
 
   try {
-    let all = [], cursor = undefined, hasMore = true;
+    const resp = await fetch(`${CACHE_URL}?ts=${Date.now()}`, { cache: 'no-store' });
 
-    // Paginer tous les résultats (Notion renvoie 100 max par appel)
-    while (hasMore) {
-      const body = { page_size: 100 };
-      if (cursor) body.start_cursor = cursor;
-
-      const resp = await fetch(`https://api.notion.com/v1/databases/${DB_ID}/query`, {
-        method: 'POST',
-        headers: {
-          'Authorization': 'Bearer ' + token,
-          'Content-Type': 'application/json',
-          'Notion-Version': '2022-06-28'
-        },
-        body: JSON.stringify(body)
-      });
-
-      if (!resp.ok) {
-        const err = await resp.json();
-        throw new Error(err.message || 'Erreur Notion ' + resp.status);
+    if (!resp.ok) {
+      if (resp.status === 404) {
+        throw new Error("Le fichier de synchronisation n'existe pas encore. Ajoutez le secret GitHub NOTION_TOKEN puis lancez l'action 'Sync Notion data'.");
       }
-
-      const data = await resp.json();
-      all = all.concat(data.results);
-      hasMore = data.has_more;
-      cursor  = data.next_cursor;
+      throw new Error(`Impossible de lire la synchronisation (${resp.status}).`);
     }
 
-    // Parser les entrées
-    const bilans = all.map(page => {
-      const props = page.properties;
-      const nomRaw = extractPlainText(findProperty(props, TITLE_PROP_NAMES));
-      const detailRaw = extractPlainText(findProperty(props, DETAIL_PROP_NAMES));
-      const dateRaw = extractDate(findProperty(props, DATE_PROP_NAMES));
-      const statut = extractPlainText(findProperty(props, STATUS_PROP_NAMES));
-      const bilanLabel = looksLikeBilanLabel(detailRaw) ? detailRaw : '';
-      const prenomRaw = bilanLabel ? '' : detailRaw;
-      const displayName = buildDisplayName(nomRaw, prenomRaw);
-      const frequency = getFrequencyMonths(props, bilanLabel, statut);
-      const url = page.url || '';
+    const data = await resp.json();
+    const bilans = Array.isArray(data.members) ? data.members : [];
+    syncMeta = data;
 
-      return {
-        nom: nomRaw,
-        prenom: prenomRaw,
-        displayName,
-        date: dateRaw,
-        statut,
-        url,
-        bilanLabel,
-        intervalMonths: frequency.value,
-        frequencySource: frequency.source
-      };
-    }).filter(b => b.date);
+    if (!bilans.length) throw new Error("Aucun adhérent synchronisé. Vérifiez le secret GitHub et l'accès de la connexion Notion à la base.");
 
-    if (!bilans.length) throw new Error('Aucun bilan avec date trouvé. Vérifiez que l\'intégration a accès à la base.');
-
-    compute(keepLatestBilanPerPerson(bilans));
+    compute(bilans);
 
   } catch (err) {
-    showError('❌ ' + err.message);
+    showError('❌ ' + formatLoadError(err));
     console.error(err);
   } finally {
     btn.disabled = false;
   }
 }
 
-function findProperty(props, candidates) {
-  for (const name of candidates) {
-    if (props[name]) return props[name];
-  }
-  return null;
-}
-
-function extractPlainText(prop) {
-  if (!prop) return '';
-
-  if (prop.type === 'title') {
-    return prop.title.map(item => item.plain_text).join('').trim();
-  }
-
-  if (prop.type === 'rich_text') {
-    return prop.rich_text.map(item => item.plain_text).join('').trim();
-  }
-
-  if (prop.type === 'select') {
-    return prop.select?.name || '';
-  }
-
-  if (prop.type === 'status') {
-    return prop.status?.name || '';
-  }
-
-  if (prop.type === 'multi_select') {
-    return prop.multi_select?.map(item => item.name).join(', ') || '';
-  }
-
-  if (prop.type === 'number') {
-    return prop.number != null ? String(prop.number) : '';
-  }
-
-  if (prop.type === 'date') {
-    return prop.date?.start || '';
-  }
-
-  if (prop.type === 'formula') {
-    const formula = prop.formula;
-    if (formula?.type === 'string') return formula.string || '';
-    if (formula?.type === 'number' && formula.number != null) return String(formula.number);
-    if (formula?.type === 'date') return formula.date?.start || '';
-  }
-
-  return '';
-}
-
-function extractDate(prop) {
-  if (!prop) return null;
-
-  if (prop.type === 'date') {
-    return prop.date?.start || null;
-  }
-
-  if (prop.type === 'formula' && prop.formula?.type === 'date') {
-    return prop.formula.date?.start || null;
-  }
-
-  const raw = extractPlainText(prop);
-  return /^\d{4}-\d{2}-\d{2}/.test(raw) ? raw : null;
-}
-
-function parseBilanNumber(raw) {
-  if (raw == null) return null;
-
-  const value = String(raw).trim().toLowerCase();
-  if (!value) return null;
-  if (value.includes('1er bilan')) return 1;
-
-  const match = value.match(/bilan\s*(\d+)/i);
-  if (!match) return null;
-
-  const number = parseInt(match[1], 10);
-  return Number.isFinite(number) ? number : null;
-}
-
-function looksLikeBilanLabel(raw) {
-  if (raw == null) return false;
-  return /bilan/i.test(String(raw)) || parseBilanNumber(raw) != null;
-}
-
-function parseFrequency(raw) {
-  if (raw == null) return null;
-
-  const value = String(raw).trim().toLowerCase();
-  if (!value) return null;
-
-  if (value.includes('mensu')) return 1;
-  if (value.includes('bimes')) return 2;
-
-  const match = value.match(/(\d+(?:[.,]\d+)?)/);
-  if (!match) return null;
-
-  const months = Math.round(parseFloat(match[1].replace(',', '.')));
-  return months > 0 ? months : null;
-}
-
-function inferFrequencyFromBilan(raw) {
-  const number = parseBilanNumber(raw);
-  if (number == null) return null;
-  return number <= 1 ? 1 : 2;
-}
-
-function getFrequencyMonths(props, bilanLabel, statut) {
-  const fallback = parseInt(document.getElementById('fallbackInterval').value, 10) || 2;
-  const prop = findProperty(props, FREQUENCY_PROP_NAMES);
-  const parsed = parseFrequency(extractPlainText(prop));
-
-  if (parsed) {
-    return { value: parsed, source: 'explicit' };
-  }
-
-  const inferred = inferFrequencyFromBilan(bilanLabel) || inferFrequencyFromBilan(statut);
-  if (inferred) {
-    return { value: inferred, source: 'inferred' };
-  }
-
-  return { value: fallback, source: 'fallback' };
-}
-
 function formatFrequency(months) {
   return months === 1 ? 'Mensuel' : `Tous les ${months} mois`;
-}
-
-function buildDisplayName(nom, prenom) {
-  const combined = [prenom, nom].filter(Boolean).join(' ').trim();
-  return combined || nom || prenom || '—';
-}
-
-function normalizeMemberKey(name) {
-  return (name || '')
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .toLowerCase()
-    .replace(/\s+/g, ' ')
-    .trim();
-}
-
-function keepLatestBilanPerPerson(bilans) {
-  const latestByPerson = new Map();
-
-  for (const bilan of bilans) {
-    const key = normalizeMemberKey(bilan.displayName);
-    if (!key) continue;
-
-    const existing = latestByPerson.get(key);
-    if (!existing || new Date(bilan.date) > new Date(existing.date)) {
-      latestByPerson.set(key, bilan);
-    }
-  }
-
-  return Array.from(latestByPerson.values());
 }
 
 function getInitials(name) {
@@ -522,8 +284,12 @@ function compute(bilans) {
     document.getElementById('statusMsg').textContent = '';
   }
 
+  const generatedAt = syncMeta?.generatedAt
+    ? new Date(syncMeta.generatedAt).toLocaleString('fr-FR', { dateStyle: 'short', timeStyle: 'short' })
+    : new Date().toLocaleTimeString('fr-FR');
+
   document.getElementById('footer').innerHTML =
-    `✅ ${processed.length} adhérents synchronisés · 1 mois : ${monthlyCount} · 2 mois : ${bimonthlyCount}${fallbackCount ? ` · défaut : ${fallbackCount}` : ''} · ${new Date().toLocaleTimeString('fr-FR')} · <a href="https://www.notion.so/${DB_ID}" target="_blank">Ouvrir Notion →</a>`;
+    `✅ ${processed.length} adhérents synchronisés · 1 mois : ${monthlyCount} · 2 mois : ${bimonthlyCount}${fallbackCount ? ` · défaut : ${fallbackCount}` : ''} · synchro : ${generatedAt} · <a href="https://www.notion.so/${DB_ID}" target="_blank">Ouvrir Notion →</a>`;
 
   renderCards();
 }
@@ -577,6 +343,18 @@ function renderCards() {
 function showError(msg) {
   document.getElementById('statusMsg').textContent = msg;
   document.getElementById('statusMsg').className = 'err';
+}
+
+function formatLoadError(err) {
+  if (!err || !err.message) {
+    return "Erreur de chargement des données synchronisées.";
+  }
+
+  if (err.message === 'Failed to fetch') {
+    return "Le fichier synchronisé n'a pas pu être chargé. Vérifiez que GitHub Pages est bien publié et que l'action 'Sync Notion data' a déjà tourné.";
+  }
+
+  return err.message;
 }
 </script>
 </body>
